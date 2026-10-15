@@ -1,0 +1,194 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "provenance": [],
+      "authorship_tag": "ABX9TyOrHpPvu5apRYXx+7I9CJoI",
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/moustafaka27/codeSTACKr/blob/master/localization\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "OhlL6KMEefGe",
+        "outputId": "397f1141-33d0-44c1-eafd-257f0ea8637f"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "sense [0.2258, 0.0645, 0.0645, 0.2258, 0.0645, 0.2258, 0.0645, 0.0645]\n",
+            "move [0.0806, 0.0806, 0.1935, 0.0806, 0.0806, 0.1935, 0.0968, 0.1935]\n",
+            "sense [0.1496, 0.0427, 0.1026, 0.1496, 0.0427, 0.359, 0.0513, 0.1026]\n",
+            "move [0.0872, 0.1021, 0.1342, 0.0594, 0.1013, 0.1342, 0.085, 0.2966]\n"
+          ]
+        }
+      ],
+      "source": [
+        "world = ['High','Low','Low','High','Low','High','Low','Low']   # High at 0,3,5\n",
+        "n = len(world)\n",
+        "p_hit, p_miss = 0.7, 0.2\n",
+        "p_exact, p_over = 0.8, 0.1\n",
+        "p_under = 1 - p_exact - p_over        # 0.1\n",
+        "U = 2\n",
+        "\n",
+        "def sense(p, Z):\n",
+        "    q = [p[i] * (p_hit if world[i] == Z else p_miss) for i in range(n)]\n",
+        "    s = sum(q)\n",
+        "    return [x / s for x in q]          # normalize\n",
+        "\n",
+        "def move(p, U):\n",
+        "    q = [0.0] * n\n",
+        "    for i in range(n):\n",
+        "        q[(i + U)     % n] += p_exact * p[i]\n",
+        "        q[(i + U + 1) % n] += p_over  * p[i]\n",
+        "        q[(i + U - 1) % n] += p_under * p[i]\n",
+        "    return q\n",
+        "\n",
+        "p = [1/n] * n\n",
+        "for step, Z in [(\"sense\", 'High'), (\"move\", None), (\"sense\", 'High'), (\"move\", None)]:\n",
+        "    p = sense(p, Z) if step == \"sense\" else move(p, U)\n",
+        "    print(step, [round(x, 4) for x in p])"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# 2D Histogram Filter (Markov localization) on a grid world\n",
+        "\n",
+        "# ---------------- World ----------------\n",
+        "ROWS, COLS = 2, 4\n",
+        "HIGH_CELLS = [(0, 0), (0, 3), (1, 1)]           # (row, col) of High cells\n",
+        "world = [['Low'] * COLS for _ in range(ROWS)]\n",
+        "for r, c in HIGH_CELLS:\n",
+        "    world[r][c] = 'High'\n",
+        "\n",
+        "# ---------------- Parameters ----------------\n",
+        "p_hit, p_miss = 0.7, 0.2                        # sensor model\n",
+        "p_exact, p_over = 0.8, 0.1                      # motion model\n",
+        "p_under = 1 - p_exact - p_over                  # 0.1\n",
+        "WRAP = True                                     # True: cyclic world, False: robot stops at the wall\n",
+        "\n",
+        "# ---------------- Helpers ----------------\n",
+        "def sign(x):\n",
+        "    return (x > 0) - (x < 0)\n",
+        "\n",
+        "def cell(r, c):\n",
+        "    if WRAP:\n",
+        "        return r % ROWS, c % COLS\n",
+        "    return min(max(r, 0), ROWS - 1), min(max(c, 0), COLS - 1)\n",
+        "\n",
+        "def sense(p, Z):\n",
+        "    q = [[p[r][c] * (p_hit if world[r][c] == Z else p_miss)\n",
+        "          for c in range(COLS)] for r in range(ROWS)]\n",
+        "    s = sum(map(sum, q))\n",
+        "    return [[x / s for x in row] for row in q]  # normalize\n",
+        "\n",
+        "def move(p, dr, dc):\n",
+        "    ur, uc = sign(dr), sign(dc)                 # unit step along the motion direction\n",
+        "    outcomes = [((dr, dc), p_exact),            # exact\n",
+        "                ((dr + ur, dc + uc), p_over),   # overshoot  (one extra step)\n",
+        "                ((dr - ur, dc - uc), p_under)]  # undershoot (one step less)\n",
+        "    q = [[0.0] * COLS for _ in range(ROWS)]\n",
+        "    for r in range(ROWS):\n",
+        "        for c in range(COLS):\n",
+        "            for (mr, mc), prob in outcomes:\n",
+        "                nr, nc = cell(r + mr, c + mc)\n",
+        "                q[nr][nc] += prob * p[r][c]\n",
+        "    return q\n",
+        "\n",
+        "def show(title, p):\n",
+        "    print(f\"\\n{title}\")\n",
+        "    for row in p:\n",
+        "        print(\"  \" + \"  \".join(f\"{x:.4f}\" for x in row))\n",
+        "    r, c = max(((r, c) for r in range(ROWS) for c in range(COLS)), key=lambda t: p[t[0]][t[1]])\n",
+        "    print(f\"  -> most likely cell: ({r},{c})  p={p[r][c]:.4f}\")\n",
+        "\n",
+        "# ---------------- Run: Sense -> Move -> Sense -> Move ----------------\n",
+        "measurements = ['High', 'High']\n",
+        "motion = (0, 2)                                 # (d_row, d_col): 2 steps to the right\n",
+        "\n",
+        "p = [[1 / (ROWS * COLS)] * COLS for _ in range(ROWS)]\n",
+        "show(\"Prior\", p)\n",
+        "p = sense(p, measurements[0]); show(f\"Sense 1 ({measurements[0]})\", p)\n",
+        "p = move(p, *motion);          show(f\"Move 1 {motion}\", p)\n",
+        "p = sense(p, measurements[1]); show(f\"Sense 2 ({measurements[1]})\", p)\n",
+        "p = move(p, *motion);          show(f\"Move 2 {motion}\", p)"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "GgNqhcqhiG73",
+        "outputId": "67811560-6ba6-4895-8e06-38b0b5961230"
+      },
+      "execution_count": null,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "\n",
+            "Prior\n",
+            "  0.1250  0.1250  0.1250  0.1250\n",
+            "  0.1250  0.1250  0.1250  0.1250\n",
+            "  -> most likely cell: (0,0)  p=0.1250\n",
+            "\n",
+            "Sense 1 (High)\n",
+            "  0.2258  0.0645  0.0645  0.2258\n",
+            "  0.0645  0.2258  0.0645  0.0645\n",
+            "  -> most likely cell: (0,0)  p=0.2258\n",
+            "\n",
+            "Move 1 (0, 2)\n",
+            "  0.0806  0.2097  0.2097  0.0806\n",
+            "  0.0806  0.0645  0.0806  0.1935\n",
+            "  -> most likely cell: (0,1)  p=0.2097\n",
+            "\n",
+            "Sense 2 (High)\n",
+            "  0.1804  0.1340  0.1340  0.1804\n",
+            "  0.0515  0.1443  0.0515  0.1237\n",
+            "  -> most likely cell: (0,3)  p=0.1804\n",
+            "\n",
+            "Move 2 (0, 2)\n",
+            "  0.1387  0.1758  0.1758  0.1387\n",
+            "  0.0680  0.1093  0.0680  0.1258\n",
+            "  -> most likely cell: (0,1)  p=0.1758\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [],
+      "metadata": {
+        "id": "MrCBNVzwen0-"
+      },
+      "execution_count": null,
+      "outputs": []
+    }
+  ]
+}
